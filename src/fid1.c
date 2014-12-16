@@ -14,10 +14,6 @@ static long ddlen = 0;
      horizontal sequence.  In the end, the result is a single column (the last
      column of the matrix).  
 
-     Fills the matrix. Note that the whole matrix is stored in memory, not just
-     one (the last) column. Implemented in a way to be simple and efficient to
-     vectorize.
-
      input:
      m: number of rows 
      n: number of columns
