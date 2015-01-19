@@ -23,6 +23,11 @@ double strale_fid1d_column(int m, int n,
                            double pb,
                            double pe);
 
+double strale_fid1d_matrix(int m, int n,
+                           double ph, 
+                           double pb, 
+                           double pe);
+
 void strale_fid1d_printcol(void);
 
 void strale_fid1d_dump_tpm(void);

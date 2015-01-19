@@ -130,6 +130,84 @@ double strale_fid1d_column(int m, int n,
   return (dd[m-1]*phh + dd[2*m-1]*pbh + dd[3*m-1]*peh);
 }
 
+
+double strale_fid1d_matrix(int m, int n,
+                           double ph, double pb, double pe)
+{
+
+  double * ee = NULL;    /* pointer to the E section of the previous column */
+  double * hh = NULL;    /* pointer to the H section of the previous column */
+  double * bb = NULL;    /* pointer to the B section of the previous column */
+
+  double * chh;          /* pointer to the E section of the current column */ 
+  double * cbb;          /* pointer to the H section of the current column */
+  double * cee;          /* pointer to the B section of the current column */
+
+  long i, j;
+
+  /* reallocate matrix if necessary */
+  if (3*n*(m+1) > ddlen)
+  {
+    free(dd);
+    dd = xmalloc(3*n*(m+1)*sizeof(double), FID_ALIGNMENT_SSE);
+    ddlen = 3*n*(m+1);
+  }
+
+  /* init pointers to elements */
+  chh = hh = dd;
+  cbb = bb = hh + m+1;
+  cee = ee = bb + m+1;
+  
+  double b0 = ph*phb + pb*pbb + pe*peb;
+  double e0 = ph*phe + pb*pbe + pe*pee;
+  double h0 = ph*phh + pb*pbh + pe*peh;
+
+  /* precompute cell (0,1) */
+  chh[0] = 0;
+  cee[0] = 0;
+  cbb[0] = b0;
+
+  /* precompute cell (1,1) */
+  chh[1] = h0;
+  cbb[1] = peb*e0;
+  cee[1] = pbe*b0;
+
+  /* precompute the rest of column 1, i.e. cells (i,1) */
+  for (i = 2; i <= m; ++i)
+  {
+    cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
+    chh[i] = peh*e0;
+    e0 *= pee;
+    cbb[i] = peb*e0;
+  }
+
+  /* iterate through columns starting from the second */
+  for (j = 1; j < n; ++j)
+  {
+    /* point each entry to the beginning (first element) */
+    chh = ee + m+1;
+    cbb = chh + m+1;
+    cee = cbb + m+1;
+
+    /* compute element (j,0) */
+    chh[0] = 0;
+    cee[0] = 0;
+    cbb[0] = bb[0]*pbb;
+
+    /* iterate cells of a column */
+    for (i = 1; i <= m; ++i)
+    {
+      cbb[i] = hh[i]*phb + bb[i]*pbb + ee[i]*peb;
+      chh[i] = hh[i-1]*phh + bb[i-1]*pbh + ee[i-1]*peh;
+      cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
+    }
+
+    hh = chh; bb = cbb; ee = cee;
+  }
+  
+  return (chh[m]*phh + cbb[m]*pbh + cee[m]*peh);
+}
+
 void strale_fid1d_init_tpm(double lambda, double gamma)
 {
   double el = exp(-lambda);
@@ -178,16 +256,21 @@ int main(int argc, char * argv[])
   strale_fid1d_init_tpm(0.208025*0.02, 2);
   strale_fid1d_dump_tpm();
 
-  h = strale_fid1d_column(20,
-                          13,
+  h = strale_fid1d_column(10,
+                          10,
                           1, 
                           0, 
                           0);
 
   printf ("-> H: %f\n", h);
   
-  printf ("Format is (H,B,E) starting from row 1 until m of last column\n\n");
-  strale_fid1d_printcol();
+  h = strale_fid1d_matrix(10,
+                          10,
+                          1,
+                          0,
+                          0);
+  
+  printf ("-> H: %f\n", h);
 
   return (EXIT_SUCCESS);
 }
