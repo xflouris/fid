@@ -1,13 +1,23 @@
 #include "fid.h"
 
-
-static float * dd = NULL;
+static double * dd = NULL;
 static long ddlen = 0;
 
+static double phh; 
+static double phb; 
+static double phe;
+
+static double pbh;
+static double pbb;
+static double pbe;
+
+static double peh;
+static double peb;
+static double pee;
 
 /* 
      
-     FID 1 model implementation with floats and no scaling
+     FID 1 model implementation with doubles and no scaling
 
      Computation is performed on a single column parallel to the vertical
      sequence of the matrix, overwriting the column at every letter of the
@@ -38,21 +48,18 @@ static long ddlen = 0;
 
 */
 
-void strale_fid1f_column(int m, int n,
-                         float ph,float pb, float pe,
-                         float phh, float phb, float phe,
-                         float pbh, float pbb, float pbe,
-                         float peh, float peb, float pee)
+double strale_fid1d_column(int m, int n,
+                           double ph, double pb, double pe)
 {
 
-  float * ee = NULL;    /* pointer to the E section of the column */
-  float * hh = NULL;    /* pointer to the H section of the column */
-  float * bb = NULL;    /* pointer to the B section of the column */
+  double * ee = NULL;    /* pointer to the E section of the column */
+  double * hh = NULL;    /* pointer to the H section of the column */
+  double * bb = NULL;    /* pointer to the B section of the column */
 
-  float diagh, diagb, diage;   /* hold values (h,b,e) of diagonal cell */
-  float toph, topb, tope;      /* hold values (h,b,e) of upper cell */
-  float temph, tempb, tempe;   /* temp variables when overwriting a cell */
-  float h0, b0, e0;
+  double diagh, diagb, diage;   /* hold values (h,b,e) of diagonal cell */
+  double toph, topb, tope;      /* hold values (h,b,e) of upper cell */
+  double temph, tempb, tempe;   /* temp variables when overwriting a cell */
+  double h0, b0, e0;
 
   long i, j;
 
@@ -60,7 +67,7 @@ void strale_fid1f_column(int m, int n,
   if (3*m > ddlen)
   {
     free(dd);
-    dd = xmalloc(3*m*sizeof(float), FID_ALIGNMENT_SSE);
+    dd = xmalloc(3*m*sizeof(double), FID_ALIGNMENT_SSE);
     ddlen = 3*m;
   }
  
@@ -69,27 +76,24 @@ void strale_fid1f_column(int m, int n,
   bb = hh + m;
   ee = bb + m;
   
-  b0 = ph*pbh + pb*pbb + pe*pbe;
-  e0 = ph*peh + pb*peb + pe*pee;
-  h0 = ph*phh + pb*phb + pe*phe;
+  b0 = ph*phb + pb*pbb + pe*peb;
+  e0 = ph*phe + pb*pbe + pe*pee;
+  h0 = ph*phh + pb*pbh + pe*peh;
 
 
   /* precompute cell (1,1) */
-  *hh   = h0;
-  *bb   = pbe*e0;
-  *ee++ = peb*b0;
-  
+  hh[0] = h0;
+  bb[0] = peb*e0;
+  ee[0] = pbe*b0;
+
   /* precompute the rest of column 1 */
   for (i = 1; i < m; ++i)
   {
-    *ee = *hh * peh + *bb * peb + *ee * pee;
-    ++hh; ++bb; ++ee;
-    *hh = phe*e0;
-
+    ee[i] = hh[i-1]*phe + bb[i-1]*pbe + ee[i-1]*pee;
+    hh[i] = peh*e0;
     e0 *= pee;
-    *bb = pbe*e0;
+    bb[i] = peb*e0;
   }
-  ++hh; ++bb;
   topb = b0;
 
   /* iterate through columns starting from the second */
@@ -102,7 +106,7 @@ void strale_fid1f_column(int m, int n,
 
     /* compute diagonal and top elements from init row */
     diagh = toph = 0;
-    diagb = topb; topb = diagb*pbb;;
+    diagb = topb; topb = diagb*pbb;
     diage = tope = 0;
 
     
@@ -111,42 +115,79 @@ void strale_fid1f_column(int m, int n,
     {
       /* save curent cell before overwriitng, since it will be used as the
        * diagonal in the next round */
-      temph = *hh; tempb = *bb; tempe = *ee;
+      temph = hh[i]; tempb = bb[i]; tempe = ee[i];
 
-      *bb = *hh*pbh   + *bb*pbb   + *ee*pbe;
-      *hh = diagh*phh + diagb*phb + diage*phe;
-      *ee = toph*peh  + topb*peb  + tope*pee;
+      bb[i] = hh[i]*phb + bb[i]*pbb + ee[i]*peb;
+      hh[i] = diagh*phh + diagb*pbh + diage*peh;
+      ee[i] = toph*phe  + topb*pbe  + tope*pee;
 
       /* retrieve diagonal and top for next round */
       diagh = temph; diagb = tempb; diage = tempe;
-      toph  = *hh++; topb  = *bb++; tope  = *ee++;
+      toph  = hh[i]; topb  = bb[i]; tope  = ee[i];
     }
   }
+
+  return (dd[m-1]*phh + dd[2*m-1]*pbh + dd[3*m-1]*peh);
 }
 
-void strale_fid1f_printcol(void)
+void strale_fid1d_init_tpm(double lambda, double gamma)
+{
+  double el = exp(-lambda);
+  
+  phh = el/gamma/(1+lambda)+1 - 1/gamma;
+  phb = lambda/(gamma*(1+lambda));
+  phe = (1-el)/gamma/(1+lambda);
+
+  pbh = el/gamma/(1+lambda);
+  pbb = 1-1/gamma+lambda/gamma/(1+lambda);
+  pbe = phe;
+
+  peh = lambda*el/gamma/(1-el)/(1+lambda);
+  peb = (1-el*(1+lambda))/gamma/(1-el)/(1+lambda);
+  pee = 1-1/gamma+lambda/(lambda+1)/gamma;
+}
+
+void strale_fid1d_printcol(void)
 {
   long m = ddlen / 3;
   long i;
 
-  float * hh = dd;
-  float * bb = hh+m;
-  float * ee = bb+m;
+  double * hh = dd;
+  double * bb = hh+m;
+  double * ee = bb+m;
 
   for (i=0; i<m; ++i)
     printf("(%f, %f, %f)  ", *hh++, *bb++, *ee++); 
+  printf ("\n");
+}
+
+void strale_fid1d_dump_tpm(void)
+{
+  printf ("Transition Probabilities\n");
+  printf ("  |     H         B         E\n");        
+  printf ("--+------------------------------\n");
+  printf ("H | %.7f %.7f %.7f\n", phh, phb, phe); 
+  printf ("B | %.7f %.7f %.7f\n", pbh, pbb, pbe); 
+  printf ("E | %.7f %.7f %.7f\n\n", peh, peb, pee); 
 }
 
 int main(int argc, char * argv[])
 {
-  strale_fid1f_column(20, 30,
-                      0.5, 0.25, 0.25,
-                      0.5, 0.2, 0.3,
-                      0.28, 0.32, 0.4,
-                      0.38, 0.32, 0.3);
+  double h;
 
+  strale_fid1d_init_tpm(0.208025*0.02, 2);
+  strale_fid1d_dump_tpm();
+
+  h = strale_fid1d_column(20,
+                          13,
+                          1, 
+                          0, 
+                          0);
+
+  printf ("-> H: %f\n", h);
+  
   printf ("Format is (H,B,E) starting from row 1 until m of last column\n\n");
-  strale_fid1f_printcol();
+  strale_fid1d_printcol();
 
   return (EXIT_SUCCESS);
 }

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <math.h>
 
 /* constants */
 
@@ -17,22 +18,14 @@ extern "C" {
 
 /* functions in fid1_matrix.c */
 
-void strale_fid1f_column(int m, int n,
-                         float ph,
-                         float pb,
-                         float pe,
-                         float phh,
-                         float phb,
-                         float phe,
-                         float pbh,
-                         float pbb,
-                         float pbe,
-                         float peh,
-                         float peb,
-                         float pee);
+double strale_fid1d_column(int m, int n,
+                           double ph,
+                           double pb,
+                           double pe);
 
-void strale_fid1f_printcol(void);
+void strale_fid1d_printcol(void);
 
+void strale_fid1d_dump_tpm(void);
 
 /* functions in utils.c */
 
