@@ -2,7 +2,7 @@
 #include <x86intrin.h>
 #include <stdlib.h>
 
-#define VEC_SIZE 2
+#define VEC_SIZE 4
 
 static double * dd = NULL;
 static long ddlen = 0;
@@ -52,15 +52,20 @@ static double pee;
 
 */
 
-static void pprint_sse(__m128d x)
+static void pprint_avx(const char * s, __m256d x)
 {
   double * p = (double *) &x;
 
+  printf ("%s",s);
+
   printf("%f ", *p++);
   printf("%f ", *p++);
+  printf("%f ", *p++);
+  printf("%f ", *p++);
+  printf("\n");
 }
 
-double strale_fid1d_matrix_sse(int m, int n,
+double strale_fid1d_matrix_avx(int m, int n,
                                double ph, double pb, double pe)
 {
 
@@ -73,33 +78,33 @@ double strale_fid1d_matrix_sse(int m, int n,
   double * cee;          /* pointer to the B section of the current column */
 
   /* vectors of probabilities */
-  __m128d PHH = _mm_set_pd(phh,phh);
-  __m128d PHB = _mm_set_pd(phb,phb);
-  __m128d PHE = _mm_set_pd(phe,phe);
+  __m256d PHH = _mm256_set_pd(phh, phh, phh, phh);
+  __m256d PHB = _mm256_set_pd(phb, phb, phb, phb);
+  __m256d PHE = _mm256_set_pd(phe, phe, phe, phe);
 
-  __m128d PBH = _mm_set_pd(pbh,pbh);
-  __m128d PBB = _mm_set_pd(pbb,pbb);
-  __m128d PBE = _mm_set_pd(pbe,pbe);
+  __m256d PBH = _mm256_set_pd(pbh, pbh, pbh, pbh);
+  __m256d PBB = _mm256_set_pd(pbb, pbb, pbb, pbb);
+  __m256d PBE = _mm256_set_pd(pbe, pbe, pbe, pbe);
 
-  __m128d PEH = _mm_set_pd(peh,peh);
-  __m128d PEB = _mm_set_pd(peb,peb);
-  __m128d PEE = _mm_set_pd(pee,pee);
+  __m256d PEH = _mm256_set_pd(peh, peh, peh, peh);
+  __m256d PEB = _mm256_set_pd(peb, peb, peb, peb);
+  __m256d PEE = _mm256_set_pd(pee, pee, pee, pee);
 
-  __m128d HH;
-  __m128d BB;
-  __m128d EE;
-  __m128d XH;
-  __m128d XB;
-  __m128d XE;
-  __m128d T;
-  __m128d T1;
-  __m128d T2;
-  __m128d T3;
-  __m128d T4;
+  __m256d HH;
+  __m256d BB;
+  __m256d EE;
+  __m256d XH;
+  __m256d XB;
+  __m256d XE;
+  __m256d T;
+  __m256d T1;
+  __m256d T2;
+  __m256d T3;
+  __m256d T4;
 
-  __m128d XBB;
-  __m128d XHH;
-  __m128d XEE;
+  __m256d XBB;
+  __m256d XHH;
+  __m256d XEE;
 
   long i, j;
   unsigned int y = (m + VEC_SIZE-1) & ~(VEC_SIZE-1);
@@ -110,7 +115,7 @@ double strale_fid1d_matrix_sse(int m, int n,
   if (3*n*y > ddlen)
   {
     free(dd);
-    dd = (double *)xmalloc(3*n*y*sizeof(double), FID_ALIGNMENT_SSE);
+    dd = (double *)xmalloc(3*n*y*sizeof(double), FID_ALIGNMENT_AVX);
     ddlen = 3*n*y;
   }
 
@@ -124,17 +129,17 @@ double strale_fid1d_matrix_sse(int m, int n,
   double h0 = ph*phh + pb*pbh + pe*peh;
 
   /* precompute cell (0,1) */
-  chh[1] = 0;
-  cee[1] = 0;
-  cbb[1] = b0;
+  chh[3] = 0;
+  cee[3] = 0;
+  cbb[3] = b0;
 
   /* precompute cell (1,1) */
-  chh[2] = h0;
-  cbb[2] = peb*e0;
-  cee[2] = pbe*b0;
+  chh[4] = h0;
+  cbb[4] = peb*e0;
+  cee[4] = pbe*b0;
 
   /* precompute the rest of column 1, i.e. cells (i,1) */
-  for (i = 3; i < y; ++i)
+  for (i = 5; i < y; ++i)
   {
     cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
     chh[i] = peh*e0;
@@ -151,56 +156,70 @@ double strale_fid1d_matrix_sse(int m, int n,
     cee = cbb + y;
 
     /* compute element (j,0) */
-    chh[1] = 0;
-    cee[1] = 0;
-    cbb[1] = bb[1]*pbb;
+    chh[3] = 0;
+    cee[3] = 0;
+    cbb[3] = bb[3]*pbb;
 
     /* set top cell of previous column */
-    XH  = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
-    XB  = _mm_set_pd (              bb[1], 0x0000000000000000 );
-    XE  = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
+    XH  = _mm256_set_pd ( 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
+    XB  = _mm256_set_pd (              bb[3], 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
+    XE  = _mm256_set_pd ( 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
 
     /* set top cell of current column */
-    XBB = _mm_set_pd (             cbb[1], 0x0000000000000000 );
-    XHH = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
-    XEE = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
+    XHH = _mm256_set_pd ( 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
+    XBB = _mm256_set_pd (             cbb[3], 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
+    XEE = _mm256_set_pd ( 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000 );
 
     /* iterate cells of a column */
-    for (i = 2; i < y; i += VEC_SIZE)
+    for (i = 4; i < y; i += VEC_SIZE)
     {
       /* the loop vectorizes the following three lines */
       //cbb[i] = hh[i]*phb + bb[i]*pbb + ee[i]*peb;
       //chh[i] = hh[i-1]*phh + bb[i-1]*pbh + ee[i-1]*peh;
       //cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
 
-      HH = _mm_load_pd(hh+i);
-      BB = _mm_load_pd(bb+i);
-      EE = _mm_load_pd(ee+i);
+      HH = _mm256_load_pd(hh+i);
+      BB = _mm256_load_pd(bb+i);
+      EE = _mm256_load_pd(ee+i);
 
       /* compute cbb */
-      T = _mm_mul_pd(HH,PHB);
-      T = _mm_add_pd(T,_mm_mul_pd(BB, PBB));
-      T = _mm_add_pd(T,_mm_mul_pd(EE,PEB));
-      _mm_store_pd(cbb+i,T);
+      T = _mm256_mul_pd(HH,PHB);
+      T = _mm256_add_pd(T,_mm256_mul_pd(BB, PBB));
+      T = _mm256_add_pd(T,_mm256_mul_pd(EE,PEB));
+      _mm256_store_pd(cbb+i,T);
 
       /* store T2 to compute cee later (B component) */
-      T2 = _mm_shuffle_pd(XBB, T, 0x01);
+      T2 = _mm256_permute2f128_pd(T, XBB, 0x03);
+      T3 = _mm256_permute_pd(T, 0x00);
+      T2 = _mm256_unpackhi_pd(T2, T3);
       XBB = T;
      
+      /**** compute chh ****/
 
-      /* compute chh */
-      XH = _mm_shuffle_pd(XH, HH, 0x01);
-      XB = _mm_shuffle_pd(XB, BB, 0x01);
-      XE = _mm_shuffle_pd(XE, EE, 0x01);
+      /* concatenate XH and HH and rotate right by one */
+      XH = _mm256_permute2f128_pd(HH, XH, 0x03);
+      T  = _mm256_permute_pd(HH, 0x00);
+      XH = _mm256_unpackhi_pd(XH, T);
 
+      /* concatenate XB and BB and rotate right by one */
+      XB = _mm256_permute2f128_pd(BB, XB, 0x03);
+      T  = _mm256_permute_pd(BB, 0x00);
+      XB = _mm256_unpackhi_pd(XB, T);
 
-      T = _mm_mul_pd(XH,PHH);
-      T = _mm_add_pd(T, _mm_mul_pd(XB,PBH));
-      T = _mm_add_pd(T, _mm_mul_pd(XE,PEH));
-      _mm_store_pd(chh+i,T);
+      /* concatenate XE and EE and rotate right by one */
+      XE = _mm256_permute2f128_pd(EE, XE, 0x03);
+      T  = _mm256_permute_pd(EE, 0x00);
+      XE = _mm256_unpackhi_pd(XE, T);
+
+      T = _mm256_mul_pd(XH,PHH);
+      T = _mm256_add_pd(T, _mm256_mul_pd(XB,PBH));
+      T = _mm256_add_pd(T, _mm256_mul_pd(XE,PEH));
+      _mm256_store_pd(chh+i,T);
 
       /* store T1 to compute cee later (H component) */
-      T1 = _mm_shuffle_pd(XHH, T, 0x01);
+      T1 = _mm256_permute2f128_pd(T, XHH, 0x03);
+      T3 = _mm256_permute_pd(T, 0x00);
+      T1 = _mm256_unpackhi_pd(T1, T3);
       XHH = T;
 
       XH = HH;
@@ -210,26 +229,55 @@ double strale_fid1d_matrix_sse(int m, int n,
       /* attempt to parallelize these two lines */
       //cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
       //cee[i+1] = chh[i]*phe + cbb[i]*pbe + cee[i]*pee;
+      //cee[i+2] = chh[i+1]*phe + cbb[i+1]*pbe + cee[i+1]*pee;
+      //cee[i+3] = chh[i+2]*phe + cbb[i+2]*pbe + cee[i+2]*pee;
 
-      /* first (and valid) of the two E component used to compute cee */
-      T3 = _mm_shuffle_pd(XEE, XEE, 0x03);
+      /* first (and valid) of the four E component used to compute cee */
+      T3 = _mm256_permute2f128_pd(XEE,XEE, 0x01);
+      T3 = _mm256_permute_pd(T3, 0x03);
 
-      //T1  = _mm_loadu_pd (chh+i-1);
-      T1  = _mm_mul_pd(T1,PHE);
-      //T2 = _mm_loadu_pd(cbb+i-1);
-      T2 = _mm_mul_pd(T2,PBE);
-      //T3 = _mm_loadu_pd(cee+i-1);
-      T3 = _mm_mul_pd(T3,PEE);
+
+//      //T1  = _mm_loadu_pd (chh+i-1);
+      T1 = _mm256_mul_pd(T1,PHE);
+//      //T2 = _mm_loadu_pd(cbb+i-1);
+      T2 = _mm256_mul_pd(T2,PBE);
+//      //T3 = _mm_loadu_pd(cee+i-1);
+      T3 = _mm256_mul_pd(T3,PEE);
       
-      T4 = _mm_add_pd(T1,T2);
-      T1 = _mm_add_pd(T4,T3);
+      T4 = _mm256_add_pd(T1,T2);
+      
+      /* compute correct cee[i] value */
+      T1 = _mm256_add_pd(T4,T3);
 
-      T2 = _mm_shuffle_pd(T1, T1, 0x00);
-      T2 = _mm_mul_pd(T2,PEE);
-      T2 = _mm_add_pd(T2,T4);
+      /* move the correct value to the slot [127:64] */
+      T2 = _mm256_permute_pd(T1, 0x00);
+      T2 = _mm256_mul_pd(T2, PEE);
+      /* compute correct cee[i+1] */
+      T2 = _mm256_add_pd(T2,T4);
 
-      T1 = _mm_shuffle_pd(T1, T2, 0x02);
-      _mm_store_pd(cee+i,T1);
+      /* blend T1[63:0] with T2[127:64] */
+      T1 = _mm256_blend_pd(T1,T2, 0x02);
+        
+      /* move the correct value to slot [191:128] */
+      T3 = _mm256_permute2f128_pd(T2,T2,0x01);
+      T3 = _mm256_permute_pd(T3, 0x0C);
+      T3 = _mm256_mul_pd(T3,PEE);
+      /* compute correct cee[i+2] */
+      T3 = _mm256_add_pd(T3,T4);
+
+      /* move the correct value to slot [255:192] */
+      T2 = _mm256_permute_pd(T3, 0x00);
+      T2 = _mm256_mul_pd(T2,PEE);
+      /* compute correct cee[i+3] */
+      T2 = _mm256_add_pd(T2,T4);
+
+      /* blend T3[191:128] with T2[255:192] */
+      T2 = _mm256_blend_pd(T3,T2,0x08);
+
+      /* blend T1[127:0] with T2[255:128] */
+      T1 = _mm256_blend_pd(T1, T2, 0x0C);
+
+      _mm256_store_pd(cee+i,T1);
 
       XEE = T1;
     }
@@ -274,13 +322,13 @@ int main(int argc, char * argv[])
   strale_fid1d_init_tpm(0.208025*0.02, 2);
   strale_fid1d_dump_tpm();
 
-  h = strale_fid1d_matrix_sse(9000,
+  h = strale_fid1d_matrix_avx(9000,
                               9000,
                               1,
                               0,
                               0);
   
-  printf ("-> Result-sse: %f\n", h);
+  printf ("-> Result-avx: %f\n", h);
 
   return (EXIT_SUCCESS);
 }
