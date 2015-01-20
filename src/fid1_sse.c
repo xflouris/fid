@@ -72,6 +72,7 @@ double strale_fid1d_matrix_sse(int m, int n,
   double * cbb;          /* pointer to the H section of the current column */
   double * cee;          /* pointer to the B section of the current column */
 
+  /* vectors of probabilities */
   __m128d PHH = _mm_set_pd(phh,phh);
   __m128d PHB = _mm_set_pd(phb,phb);
   __m128d PHE = _mm_set_pd(phe,phe);
@@ -91,9 +92,14 @@ double strale_fid1d_matrix_sse(int m, int n,
   __m128d XB;
   __m128d XE;
   __m128d T;
+  __m128d T1;
   __m128d T2;
   __m128d T3;
   __m128d T4;
+
+  __m128d XBB;
+  __m128d XHH;
+  __m128d XEE;
 
   long i, j;
   unsigned int y = (m + VEC_SIZE-1) & ~(VEC_SIZE-1);
@@ -149,9 +155,15 @@ double strale_fid1d_matrix_sse(int m, int n,
     cee[1] = 0;
     cbb[1] = bb[1]*pbb;
 
+    /* set top cell of previous column */
     XH  = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
     XB  = _mm_set_pd (              bb[1], 0x0000000000000000 );
     XE  = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
+
+    /* set top cell of current column */
+    XBB = _mm_set_pd (             cbb[1], 0x0000000000000000 );
+    XHH = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
+    XEE = _mm_set_pd ( 0x0000000000000000, 0x0000000000000000 );
 
     /* iterate cells of a column */
     for (i = 2; i < y; i += VEC_SIZE)
@@ -171,15 +183,25 @@ double strale_fid1d_matrix_sse(int m, int n,
       T = _mm_add_pd(T,_mm_mul_pd(EE,PEB));
       _mm_store_pd(cbb+i,T);
 
+      /* store T2 to compute cee later (B component) */
+      T2 = _mm_shuffle_pd(XBB, T, 0x01);
+      XBB = T;
+     
+
       /* compute chh */
       XH = _mm_shuffle_pd(XH, HH, 0x01);
       XB = _mm_shuffle_pd(XB, BB, 0x01);
       XE = _mm_shuffle_pd(XE, EE, 0x01);
 
+
       T = _mm_mul_pd(XH,PHH);
       T = _mm_add_pd(T, _mm_mul_pd(XB,PBH));
       T = _mm_add_pd(T, _mm_mul_pd(XE,PEH));
       _mm_store_pd(chh+i,T);
+
+      /* store T1 to compute cee later (H component) */
+      T1 = _mm_shuffle_pd(XHH, T, 0x01);
+      XHH = T;
 
       XH = HH;
       XB = BB;
@@ -189,22 +211,27 @@ double strale_fid1d_matrix_sse(int m, int n,
       //cee[i] = chh[i-1]*phe + cbb[i-1]*pbe + cee[i-1]*pee;
       //cee[i+1] = chh[i]*phe + cbb[i]*pbe + cee[i]*pee;
 
-      T  = _mm_loadu_pd (chh+i-1);
-      T  = _mm_mul_pd(T,PHE);
-      T2 = _mm_loadu_pd(cbb+i-1);
+      /* first (and valid) of the two E component used to compute cee */
+      T3 = _mm_shuffle_pd(XEE, XEE, 0x03);
+
+      //T1  = _mm_loadu_pd (chh+i-1);
+      T1  = _mm_mul_pd(T1,PHE);
+      //T2 = _mm_loadu_pd(cbb+i-1);
       T2 = _mm_mul_pd(T2,PBE);
-      T3 = _mm_loadu_pd(cee+i-1);
+      //T3 = _mm_loadu_pd(cee+i-1);
       T3 = _mm_mul_pd(T3,PEE);
       
-      T4 = _mm_add_pd(T,T2);
-      T = _mm_add_pd(T4,T3);
+      T4 = _mm_add_pd(T1,T2);
+      T1 = _mm_add_pd(T4,T3);
 
-      T2 = _mm_shuffle_pd(T,T,0x00);
+      T2 = _mm_shuffle_pd(T1, T1, 0x00);
       T2 = _mm_mul_pd(T2,PEE);
       T2 = _mm_add_pd(T2,T4);
 
-      T = _mm_shuffle_pd(T,T2,0x02);
-      _mm_store_pd(cee+i,T);
+      T1 = _mm_shuffle_pd(T1, T2, 0x02);
+      _mm_store_pd(cee+i,T1);
+
+      XEE = T1;
     }
 
     hh = chh; bb = cbb; ee = cee;
