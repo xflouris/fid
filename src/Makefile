@@ -7,7 +7,20 @@ CFLAGS=-O3 $(WARN) $(PROFILING)
 LIBS=-lm
 DEPS=fid.h
 
-all: fid1
+all: tester-sse tester
 
-fid1: fid1.c utils.c
-	$(CC) -Wall -O3 $+ $(LIBS) -o $@
+#%.o : %.c $(DEPS)
+#	$(CC) $(CFLAGS) $(WARN) -o $@ $<
+
+utils.o : utils.c $(DEPS)
+	$(CC) -c $(WARN) $(CFLAGS) -o $@ $<
+
+tester: fid1.c utils.o
+	$(CC) $(CFLAGS) $(WARN) $+ $(LIBS) -o $@
+
+tester-sse: fid1_sse.c utils.o
+	$(CC) $(CFLAGS) -mssse3 $(WARN) $+ $(LIBS) -o $@
+
+clean:
+	rm tester-sse tester utils.o
+

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-/* functions in fid1_matrix.c */
+/* functions in fid1.c */
 
 double strale_fid1d_column(int m, int n,
                            double ph,
@@ -31,6 +31,15 @@ double strale_fid1d_matrix(int m, int n,
 void strale_fid1d_printcol(void);
 
 void strale_fid1d_dump_tpm(void);
+
+/* functions in fid1_sse.c */
+
+double strale_fid1d_matrix_sse(int m, int n,
+                               double ph, 
+                               double pb, 
+                               double pe);
+
+void strale_fid1d_init_tpm(double lambda, double gamma);
 
 /* functions in utils.c */
 
