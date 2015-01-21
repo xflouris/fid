@@ -184,8 +184,13 @@ double strale_fid1d_matrix_avx(int m, int n,
 
       /* compute cbb */
       T = _mm256_mul_pd(HH,PHB);
+#ifdef HAVE_FMA
+      T = _mm256_fmadd_pd(BB,PBB,T);
+      T = _mm256_fmadd_pd(EE,PEB,T);
+#else
       T = _mm256_add_pd(T,_mm256_mul_pd(BB, PBB));
       T = _mm256_add_pd(T,_mm256_mul_pd(EE,PEB));
+#endif
       _mm256_store_pd(cbb+i,T);
 
       /* store T2 to compute cee later (B component) */
@@ -212,8 +217,13 @@ double strale_fid1d_matrix_avx(int m, int n,
       XE = _mm256_unpackhi_pd(XE, T);
 
       T = _mm256_mul_pd(XH,PHH);
+#ifdef HAVE_FMA
+      T = _mm256_fmadd_pd(XB,PBH,T);
+      T = _mm256_fmadd_pd(XE,PEH,T);
+#else
       T = _mm256_add_pd(T, _mm256_mul_pd(XB,PBH));
       T = _mm256_add_pd(T, _mm256_mul_pd(XE,PEH));
+#endif
       _mm256_store_pd(chh+i,T);
 
       /* store T1 to compute cee later (H component) */
@@ -240,37 +250,55 @@ double strale_fid1d_matrix_avx(int m, int n,
 //      //T1  = _mm_loadu_pd (chh+i-1);
       T1 = _mm256_mul_pd(T1,PHE);
 //      //T2 = _mm_loadu_pd(cbb+i-1);
+#ifdef HAVE_FMA
+      T4 = _mm256_fmadd_pd(T2,PBE,T1);
+#else
       T2 = _mm256_mul_pd(T2,PBE);
-//      //T3 = _mm_loadu_pd(cee+i-1);
-      T3 = _mm256_mul_pd(T3,PEE);
-      
       T4 = _mm256_add_pd(T1,T2);
+#endif
+//      //T3 = _mm_loadu_pd(cee+i-1);
+
+#ifdef HAVE_FMA
+      T1 = _mm256_fmadd_pd(T3,PEE,T4);
+#else
+      T3 = _mm256_mul_pd(T3,PEE);
       
       /* compute correct cee[i] value */
       T1 = _mm256_add_pd(T4,T3);
+#endif
 
       /* move the correct value to the slot [127:64] */
       T2 = _mm256_permute_pd(T1, 0x00);
+#ifdef HAVE_FMA
+      T2 = _mm256_fmadd_pd(T2,PEE,T4);
+#else
       T2 = _mm256_mul_pd(T2, PEE);
       /* compute correct cee[i+1] */
       T2 = _mm256_add_pd(T2,T4);
-
+#endif
       /* blend T1[63:0] with T2[127:64] */
       T1 = _mm256_blend_pd(T1,T2, 0x02);
         
       /* move the correct value to slot [191:128] */
       T3 = _mm256_permute2f128_pd(T2,T2,0x01);
       T3 = _mm256_permute_pd(T3, 0x0C);
+#ifdef HAVE_FMA
+      T3 = _mm256_fmadd_pd(T3,PEE,T4);
+#else
       T3 = _mm256_mul_pd(T3,PEE);
       /* compute correct cee[i+2] */
       T3 = _mm256_add_pd(T3,T4);
+#endif
 
       /* move the correct value to slot [255:192] */
       T2 = _mm256_permute_pd(T3, 0x00);
+#ifdef HAVE_FMA
+      T2 = _mm256_fmadd_pd(T2,PEE,T4);
+#else
       T2 = _mm256_mul_pd(T2,PEE);
       /* compute correct cee[i+3] */
       T2 = _mm256_add_pd(T2,T4);
-
+#endif
       /* blend T3[191:128] with T2[255:192] */
       T2 = _mm256_blend_pd(T3,T2,0x08);
 
