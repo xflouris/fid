@@ -7,7 +7,7 @@ CFLAGS=-O3 $(WARN) $(PROFILING)
 LIBS=-lm
 DEPS=fid.h
 
-all: tester-avx2 tester-avx tester-avx-fma tester-sse tester
+all: tester-avx2 tester-avx tester-avx-fma tester-sse tester-sse-fma tester
 
 #%.o : %.c $(DEPS)
 #	$(CC) $(CFLAGS) $(WARN) -o $@ $<
@@ -21,6 +21,9 @@ tester: fid1.c utils.o
 tester-sse: fid1_sse.c utils.o
 	$(CC) $(CFLAGS) -mssse3 $+ $(LIBS) -o $@
 
+tester-sse-fma: fid1_sse.c utils.o
+	$(CC) $(CFLAGS) -DHAVE_FMA -mssse3 -mfma $+ $(LIBS) -o $@
+
 tester-avx: fid1_avx.c utils.o
 	$(CC) $(CFLAGS) -mavx $+ $(LIBS) -o $@
 
@@ -30,5 +33,5 @@ tester-avx2: fid1_avx.c utils.o
 tester-avx-fma: fid1_avx.c utils.o
 	$(CC) $(CFLAGS) -DHAVE_FMA -mavx -mfma $+ $(LIBS) -o $@
 clean:
-	rm tester-sse tester-avx tester-avx-fma tester-avx2 tester utils.o
+	rm tester-sse tester-sse-fma tester-avx tester-avx-fma tester-avx2 tester utils.o
 

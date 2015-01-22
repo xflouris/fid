@@ -179,8 +179,13 @@ double strale_fid1d_matrix_sse(int m, int n,
 
       /* compute cbb */
       T = _mm_mul_pd(HH,PHB);
+#ifdef HAVE_FMA
+      T = _mm_fmadd_pd(BB,PBB,T);
+      T = _mm_fmadd_pd(EE,PEB,T);
+#else
       T = _mm_add_pd(T,_mm_mul_pd(BB, PBB));
       T = _mm_add_pd(T,_mm_mul_pd(EE,PEB));
+#endif
       _mm_store_pd(cbb+i,T);
 
       /* store T2 to compute cee later (B component) */
@@ -195,8 +200,13 @@ double strale_fid1d_matrix_sse(int m, int n,
 
 
       T = _mm_mul_pd(XH,PHH);
+#ifdef HAVE_FMA
+      T = _mm_fmadd_pd(XB,PBH,T);
+      T = _mm_fmadd_pd(XE,PEH,T);
+#else
       T = _mm_add_pd(T, _mm_mul_pd(XB,PBH));
       T = _mm_add_pd(T, _mm_mul_pd(XE,PEH));
+#endif
       _mm_store_pd(chh+i,T);
 
       /* store T1 to compute cee later (H component) */
@@ -217,16 +227,29 @@ double strale_fid1d_matrix_sse(int m, int n,
       //T1  = _mm_loadu_pd (chh+i-1);
       T1  = _mm_mul_pd(T1,PHE);
       //T2 = _mm_loadu_pd(cbb+i-1);
+#ifdef HAVE_FMA
+      T4 = _mm_fmadd_pd(T2,PBE,T1);
+#else
       T2 = _mm_mul_pd(T2,PBE);
       //T3 = _mm_loadu_pd(cee+i-1);
+      T4 = _mm_add_pd(T1,T2);
+#endif
+
+#ifdef HAVE_FMA
+      T1 = _mm_fmadd_pd(T3,PEE,T4);
+#else
       T3 = _mm_mul_pd(T3,PEE);
       
-      T4 = _mm_add_pd(T1,T2);
       T1 = _mm_add_pd(T4,T3);
+#endif
 
       T2 = _mm_shuffle_pd(T1, T1, 0x00);
+#ifdef HAVE_FMA
+      T2 = _mm_fmadd_pd(T2,PEE,T4);
+#else
       T2 = _mm_mul_pd(T2,PEE);
       T2 = _mm_add_pd(T2,T4);
+#endif
 
       T1 = _mm_shuffle_pd(T1, T2, 0x02);
       _mm_store_pd(cee+i,T1);
