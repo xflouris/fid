@@ -243,9 +243,12 @@ double strale_fid1d_matrix_avx(int m, int n,
       //cee[i+3] = chh[i+2]*phe + cbb[i+2]*pbe + cee[i+2]*pee;
 
       /* first (and valid) of the four E component used to compute cee */
+#ifdef HAVE_AVX2
+      T3 = _mm256_permute4x64_pd(XEE, 0x03);
+#else
       T3 = _mm256_permute2f128_pd(XEE,XEE, 0x01);
       T3 = _mm256_permute_pd(T3, 0x03);
-
+#endif
 
 //      //T1  = _mm_loadu_pd (chh+i-1);
       T1 = _mm256_mul_pd(T1,PHE);
@@ -280,8 +283,12 @@ double strale_fid1d_matrix_avx(int m, int n,
       T1 = _mm256_blend_pd(T1,T2, 0x02);
         
       /* move the correct value to slot [191:128] */
+#ifdef HAVE_AVX2
+      T3 = _mm256_permute4x64_pd(T2,0x55);
+#else
       T3 = _mm256_permute2f128_pd(T2,T2,0x01);
       T3 = _mm256_permute_pd(T3, 0x0C);
+#endif
 #ifdef HAVE_FMA
       T3 = _mm256_fmadd_pd(T3,PEE,T4);
 #else
