@@ -11,7 +11,6 @@
 #define FID_ALIGNMENT_SSE 16
 #define FID_ALIGNMENT_AVX 32
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
