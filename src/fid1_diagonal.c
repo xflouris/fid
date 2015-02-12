@@ -7,6 +7,9 @@ static int * nscale = NULL;
 static long scalelen = 0;
 #endif
 
+static long eemitlen = 0;
+static long bemitlen = 0;
+
 static double phh; 
 static double phb; 
 static double phe;
@@ -18,6 +21,13 @@ static double pbe;
 static double peh;
 static double peb;
 static double pee;
+
+static double * bemit = NULL;          /* emission probability (birth) */
+static double * eemit = NULL;          /* emission probability (extinction) */
+
+static double * vsum  = NULL;
+static double * vprod = NULL;
+
 
 static void set_sequence_1 (double * s);
 static void set_sequence_2 (double * s);
@@ -36,8 +46,8 @@ static const double SCALE_FACTOR    = __FLT_MAX__;
      content of rightn.
 
      input:
-     s1: partials of sequence 1. Eeach element has four entries (order A,C,G,T)
-     s2: partials of sequence 2. Eeach element has four entries (order A,C,G,T)
+     s1: partials of sequence 1. Each element has four entries (order A,C,G,T)
+     s2: partials of sequence 2. Each element has four entries (order A,C,G,T)
      m: number of elements in s1 
      n: number of elements in s2
      pstart: starting probability for homology (for cell 0,0)
@@ -47,19 +57,22 @@ static const double SCALE_FACTOR    = __FLT_MAX__;
      rightn: ending event (0 = Homology, 1 = Birth, 2 = Extinction)
 
      matrix format:
-     The matrix (dd) is a linear array of size 3*n*(m+1) doubles. It is
-     arranged in columns. Each component H,B,E of the cells of a column are
-     stored consequently.  Therefore, elements dd[3*(m+1)*i+0..3*(m+1)*i+m] are
-     the H components, dd[3*(m+1)*i+m+1..3*(m+1)*i+2*m+1] the B components, and
-     dd[3*(m+1)*i+2*m+2..3*m*i+3*m+2] the E components of the i-th column, for
-     0 <= i < n. Note that the initialization row is included in the matrix,
-     but not the initialization column.
+     The matrix (dd) is a linear array of size 3*(n+1)*(m+1)+6*(n+m) doubles,
+     although it could be a bit smaller if we can compute the exact number
+     of padding elements. It is arranged in the form of anti-diagonals, and the
+     cells of each diagonal are arranged from bottom left to top right. The
+     H,B,E components are stored in three separated matrices in the same linear
+     allocated space such that each component category of a diagonal is stored 
+     consequently in memory in order to favour vectorization. The order of the
+     three matrices is H,B and E. Initialization row and column is included,
+     therefore the size of the matrix if we were to draw it on paper would be
+     (m+1)*(n+1).
 
      output:
      Depending on the content of rightn, the function returns the calculated
      log probability of the cell diagonally bottom-right, right or below the
      bottom-right cell of the DP matrix, depending if rightn was set to H, B or
-     E, repsectively.
+     E, respectively.
 
 */
 
@@ -79,15 +92,35 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     dd = xmalloc((3*(n+1)*(m+1) + 6*(n + m))*sizeof(double), FID_ALIGNMENT_SSE);
     ddlen = 3*(n+1)*(m+1) + 6*(n + m);
   }
+
+  if (m+1 > eemitlen)
+  {
+    free(eemit);
+    eemit = xmalloc((m+1) * sizeof(double), FID_ALIGNMENT_SSE);
+    eemitlen = m+1;
+    free(vprod);
+    vprod = xmalloc(4*(m+1) * sizeof(double), FID_ALIGNMENT_SSE);
+  }
+  if (n+1 > bemitlen)
+  {
+    free(bemit);
+    bemit = xmalloc((n+1) * sizeof(double), FID_ALIGNMENT_SSE);
+    bemitlen = n+1;
+    free(vsum);
+    vsum = xmalloc(4*(n+1) * sizeof(double), FID_ALIGNMENT_SSE);
+  }
 #ifdef SCALING
   if (n+m+1 > scalelen)
   {
     free(nscale);
     nscale = xmalloc((n+m+1)*sizeof(int), FID_ALIGNMENT_SSE);
     scalelen = n+m+1;
-    memset(nscale,0,(n+m+1)*sizeof(int));
     SCALE_THRESHOLD = sqrt(__FLT_MIN__);
   }
+#endif
+
+#ifdef SCALING
+    memset(nscale,0,(n+m+1)*sizeof(int));
 #endif
 
   double * hh0 = NULL;   /* pointer to the E section of the current diagonal */ 
@@ -103,8 +136,6 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   double * ee2 = NULL;   /* pointer to the B section of 2 diagonals behind */
 
   double hemit;          /* emission probability (homology) */
-  double bemit;          /* emission probability (birth) */
-  double eemit;          /* emission probability (extinction) */
 
   double prod0;          /* temp storage for computing products in H emissions */
   double prod1;
@@ -138,6 +169,28 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   assert(leftn >=0 && leftn <= 3);
   startprob[leftn] = pstart;  
 
+  /* precompute emissions */
+  double * vprodptr= vprod + 4;
+  for (k1 = 0, i = 1; i <= m; ++i, k1 += 4)
+  {
+    eemit[i] = freqs[0]*s1[(i-1)*4+0] + freqs[1]*s1[(i-1)*4+1] + freqs[2]*s1[(i-1)*4+2] + freqs[3]*s1[(i-1)*4+3];
+    
+    vprodptr[k1+0] = freqs[0]*s1[k1+0];
+    vprodptr[k1+1] = freqs[1]*s1[k1+1];
+    vprodptr[k1+2] = freqs[2]*s1[k1+2];
+    vprodptr[k1+3] = freqs[3]*s1[k1+3];
+  }
+
+  double * vsumptr = vsum + 4;
+  for (k2 = 0, i = 1; i <= n; ++i, k2 += 4)
+  {
+    bemit[i] = freqs[0]*s2[(i-1)*4+0] + freqs[1]*s2[(i-1)*4+1] + freqs[2]*s2[(i-1)*4+2] + freqs[3]*s2[(i-1)*4+3];
+
+    vsumptr[k2+0] = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
+    vsumptr[k2+1] = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
+    vsumptr[k2+2] = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
+    vsumptr[k2+3] = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+  }
 
 
   /* set pointers to elements of first diagonal, i.e. the second diagonal
@@ -162,11 +215,8 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   bb2[1] = startprob[1];
   ee2[1] = startprob[2];
 
-  bemit = freqs[0]*s2[0*4+0] + freqs[1]*s2[0*4+1] + freqs[2]*s2[0*4+2] + freqs[3]*s2[0*4+3];
-  eemit = freqs[0]*s1[0*4+0] + freqs[1]*s1[0*4+1] + freqs[2]*s1[0*4+2] + freqs[3]*s1[0*4+3];
-
-  double b0 = (startprob[0]*phb + startprob[1]*pbb + startprob[2]*peb)*bemit;
-  double e0 = (startprob[0]*phe + startprob[1]*pbe + startprob[2]*pee)*eemit;
+  double b0 = (startprob[0]*phb + startprob[1]*pbb + startprob[2]*peb)*bemit[1];
+  double e0 = (startprob[0]*phe + startprob[1]*pbe + startprob[2]*pee)*eemit[1];
 
   /* set cell (1,0) */
   hh1[1] = 0;
@@ -178,13 +228,12 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   bb1[2] = b0;
   ee1[2] = 0;
 
-  printf ("(1,0) = (%.17f %.17f %.17f)\n", hh1[1], bb1[1], ee1[1]);
-  printf ("(0,1) = (%.17f %.17f %.17f)\n", hh1[2], bb1[2], ee1[2]);
-
+  //printf ("(1,0) = (%.17f %.17f %.17f)\n", hh1[1], bb1[1], ee1[1]);
+  //printf ("(0,1) = (%.17f %.17f %.17f)\n", hh1[2], bb1[2], ee1[2]);
 
   int dsize = 3;        /* size of 3rd diagonal without padding */
 
-  printf ("m: %d n %d\n\n", m, n);
+//  printf ("m: %d n %d\n\n", m, n);
   /* traverse diagonals upper triangle */
   for (i = 2; i <= n; ++i)
   {
@@ -194,75 +243,68 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
 #endif
     dsize_padded = dsize + 1 + ((dsize+1) & 0x01);
 
-    eemit = freqs[0]*s1[(i-1)*4+0] + freqs[1]*s1[(i-1)*4+1] + freqs[2]*s1[(i-1)*4+2] + freqs[3]*s1[(i-1)*4+3];
+    e0 = e0 * pee * eemit[i];
 
-    e0 = e0 * pee * eemit;
-
-    k1 = (i-2)*4;
-    k2 = 0;
+    k1 = (i-1);
+    k2 = 1;
 
     hh0[1] = 0;
     bb0[1] = 0;
     ee0[1] = e0;
+
     /* start from the third element, i.e. (i,1) */
     for (j = 2; j < dsize; j += 2)
     {
-      assert(k1 >= 0);
-      /* TODO: precompute bemit and hemit */
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
+      assert(k1 > 0);
 
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
-
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j] = (hh2[j-1]*phh + bb2[j-1]*pbh + ee2[j-1]*peh) * hemit;
-      bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit;
-      ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit;
+      bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit[k2];
+      ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit[k1];
 
-      k1 -= 4;
-      k2 += 4;
-      if (k1 < 0) continue;
-      assert(k1 >= 0);
+      k1 -= 1;
+      k2 += 1;
+      if (k1 <= 0) continue;
+      assert(k1 > 0);
 
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j+1] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)  * hemit;
-      bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)  * bemit;
-      ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee)* eemit;
+      bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)  * bemit[k2];
+      ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee)* eemit[k1];
 
       /* move pointers to sequence partials */
-      k1 -= 4;
-      k2 += 4;
+      k1 -= 1;
+      k2 += 1;
     }
-    bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-    b0 = b0*pbb*bemit;
+    b0 = b0*pbb*bemit[k2];
     hh0[dsize] = 0;
     bb0[dsize] = b0;
     ee0[dsize] = 0;
 
 #ifdef SCALING
     /* scaling */
-    /* skip first and last */
+    /* skip first cell (from first column) and last cell (from first row) of the
+       diagonal. That is the way Dirk performs scaling in his implementation. */
     if (i > 2)
     {
       for (j = 1; j < dsize-1; ++j)
@@ -310,6 +352,7 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
 
     ++dsize;
   }
+
   /* traverse equal-size diagonals in the middle. Only initialization
      column */ 
   for (dsize = i = n+1; i <= m; ++i)
@@ -321,12 +364,10 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
 
     dsize_padded = dsize + 1 + ((dsize+1) & 0x01);
 
-    eemit = freqs[0]*s1[(i-1)*4+0] + freqs[1]*s1[(i-1)*4+1] + freqs[2]*s1[(i-1)*4+2] + freqs[3]*s1[(i-1)*4+3];
+    e0 = e0 * pee * eemit[i];
 
-    e0 = e0 * pee * eemit;
-
-    k1 = (i-1)*4;
-    k2 = -4;
+    k1 = i;
+    k2 = 0;
 
     hh0[1] = 0;
     bb0[1] = 0;
@@ -334,49 +375,44 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     for (j = 2; j < dsize_padded; j += 2)
     {
       /* move pointers to sequence partials */
-      k1 -= 4;
-      k2 += 4;
-      if (k1 < 0) continue;
-      assert(k1 >= 0);
-      /* TODO: precompute bemit and hemit */
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+      k1 -= 1;
+      k2 += 1;
+      if (k1 <= 0) continue;
+      assert(k1 > 0);
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j] = (hh2[j-1]*phh + bb2[j-1]*pbh + ee2[j-1]*peh) * hemit;
-      bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit;
-      ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit;
+      bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit[k2];
+      ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit[k1];
 
-      k1 -= 4;
-      k2 += 4;
+      k1 -= 1;
+      k2 += 1;
 
-      if (k1 < 0) continue;
+      if (k1 <= 0) continue;
 
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j+1] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
-      bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit;
-      ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit;
+      bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[k2];
+      ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[k1];
     }
 
 #ifdef SCALING
@@ -437,56 +473,52 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     nscale[i] = nscale[i-1];
 #endif
 
-    //padding = dsize & 0x01;
     dsize_padded = dsize + ((dsize) & 0x01);
 
-    k1 = (m-1)*4;
-    k2 = (i-m-1)*4;
+    k1 = (m);
+    k2 = (i-m);
 
     for (j = 0; j < dsize; j += 2)
     {
-      assert(k1 >= 0);
-      /* TODO: precompute bemit and hemit */
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+      assert(k1 > 0);
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
-      bb0[j] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit;
-      ee0[j] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit;
+      bb0[j] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[k2];
+      ee0[j] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[k1];
 
-      k1 -= 4;
-      k2 += 4;
-      assert(k1 >= 0);
+      k1 -= 1;
+      k2 += 1;
+      if (k1 <=0) continue;
+      assert(k1 > 0);
 
-      bemit = freqs[0]*s2[k2+0] + freqs[1]*s2[k2+1] + freqs[2]*s2[k2+2] + freqs[3]*s2[k2+3];
-      eemit = freqs[0]*s1[k1+0] + freqs[1]*s1[k1+1] + freqs[2]*s1[k1+2] + freqs[3]*s1[k1+3];
-      sum0  = sm[0*4+0]*s2[k2+0] + sm[0*4+1]*s2[k2+1] + sm[0*4+2]*s2[k2+2] + sm[0*4+3]*s2[k2+3];
-      sum1  = sm[1*4+0]*s2[k2+0] + sm[1*4+1]*s2[k2+1] + sm[1*4+2]*s2[k2+2] + sm[1*4+3]*s2[k2+3];
-      sum2  = sm[2*4+0]*s2[k2+0] + sm[2*4+1]*s2[k2+1] + sm[2*4+2]*s2[k2+2] + sm[2*4+3]*s2[k2+3];
-      sum3  = sm[3*4+0]*s2[k2+0] + sm[3*4+1]*s2[k2+1] + sm[3*4+2]*s2[k2+2] + sm[3*4+3]*s2[k2+3];
+      sum0  = vsum[k2*4+0];
+      sum1  = vsum[k2*4+1];
+      sum2  = vsum[k2*4+2];
+      sum3  = vsum[k2*4+3];
+      prod0 = vprod[k1*4+0];
+      prod1 = vprod[k1*4+1];
+      prod2 = vprod[k1*4+2];
+      prod3 = vprod[k1*4+3];
 
-      prod0 = freqs[0]*s1[k1+0];
-      prod1 = freqs[0]*s1[k1+1];
-      prod2 = freqs[0]*s1[k1+2];
-      prod3 = freqs[0]*s1[k1+3];
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
       hh0[j+1] = (hh2[j+1]*phh + bb2[j+1]*pbh + ee2[j+1]*peh) * hemit;
-      bb0[j+1] = (hh1[j+1]*phb + bb1[j+1]*pbb + ee1[j+1]*peb) * bemit;
-      ee0[j+1] = (hh1[j+2]*phe + bb1[j+2]*pbe + ee1[j+2]*pee) * eemit;
+      bb0[j+1] = (hh1[j+1]*phb + bb1[j+1]*pbb + ee1[j+1]*peb) * bemit[k2];
+      ee0[j+1] = (hh1[j+2]*phe + bb1[j+2]*pbe + ee1[j+2]*pee) * eemit[k1];
+
       /* move pointers to sequence partials */
-      k1 -= 4;
-      k2 += 4;
+      k1 -= 1;
+      k2 += 1;
       
     }
 #ifdef SCALING
@@ -534,7 +566,6 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
 
     ++hh2;
   }
-  //int scaling = 0;
   prob = 0;
   assert (rightn>=0 && rightn<= 2);
   if (rightn == 0) prob = (hh1[0]*phh + bb1[0]*pbh + ee1[0]*peh);
@@ -620,7 +651,7 @@ double strale_fid1de_run(const double * s1,
 
   /* compute the 9 probability entries and output them (order H,B,E) */
   compute_probs(t*lambda, gamma);
-  strale_fid1d_dump_tpm();
+  //strale_fid1d_dump_tpm();
 
   if (rightn != 0 && rightn != 1 && rightn != 2) return (0);
 
@@ -645,6 +676,15 @@ double strale_fid1de_run(const double * s1,
 int main(int argc, char * argv[])
 {
   double h;
+
+  if (argc != 3)
+   {
+     fprintf(stderr, " syntax: %s seq1end seq2end\n", argv[0]);
+     exit(1);
+   }
+
+  int seq1end = atoi(argv[1]);
+  int seq2end = atoi(argv[2]);
 
   /* set number of elements (not elements*4) for the two sequences */
   int s1_size = 75;
@@ -671,9 +711,9 @@ int main(int argc, char * argv[])
   h = strale_fid1de_run(s1,           /* sequence 1 */
                         s2,           /* sequence 2 */
                         1,              /* sequence 1 start */
-                        70,             /* sequence 1 end */
+                        seq1end,             /* sequence 1 end */
                         1,              /* sequence 1 start */
-                        45,             /* sequence 2 end */
+                        seq2end,             /* sequence 2 end */
                         0.0452143,      /* tau */
                         0.0026875,      /* lambda */
                         2.5,            /* gamma */
