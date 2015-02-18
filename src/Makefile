@@ -7,7 +7,7 @@ CFLAGS=-O3 -g $(WARN) $(PROFILING)
 LIBS=-lm
 DEPS=fid.h
 
-all: tester-avx2 tester-avx tester-avx-fma tester-sse tester-sse-fma tester tester-avx-fmath tester-fmath tester-fid1-emit tester-fid1-diag tester-fid1-diag-scale
+all: tester-avx2 tester-avx tester-avx-fma tester-sse tester-sse-fma tester tester-avx-fmath tester-fmath tester-fid1-emit tester-fid1-diag tester-fid1-diag-scale tester-fid1-diag-sse3
 
 #%.o : %.c $(DEPS)
 #	$(CC) $(CFLAGS) $(WARN) -o $@ $<
@@ -45,8 +45,11 @@ tester-fid1-diag: fid1_diagonal.c utils.o
 tester-fid1-diag-scale: fid1_diagonal.c utils.o
 	$(CC) -DSCALING $(CFLAGS) $+ $(LIBS) -o $@
 
+tester-fid1-diag-sse3: fid1_diagonal_sse.c utils.o
+	$(CC) -DSCALING -mssse3 $(CFLAGS) $+ $(LIBS) -o $@
+
 tester-avx-fma: fid1_avx.c utils.o
 	$(CC) $(CFLAGS) -DHAVE_FMA -mavx -mfma $+ $(LIBS) -o $@
 clean:
-	rm tester-sse tester-sse-fma tester-avx tester-avx-fma tester-avx2 tester utils.o tester-fmath tester-fid1-emit tester-fid1-diag-scale
+	rm tester-sse tester-sse-fma tester-avx tester-avx-fma tester-avx2 tester utils.o tester-fmath tester-fid1-emit tester-fid1-diag-scale tester-fid1-diag-sse3
 
