@@ -82,13 +82,69 @@ static const double SCALE_FACTOR    = __FLT_MAX__;
 
 */
 
-static void pprint_sse(__m128d x)
-{
-  double * p = (double *) &x;
+#define comphemit(k1,k2)                        \
+  xmm0 = _mm_load_pd(vsum+k2+0);                \
+  xmm1 = _mm_load_pd(vsum+k2+2);                \
+  xmm2 = _mm_load_pd(vprod+k1+0);               \
+  xmm3 = _mm_load_pd(vprod+k1+2);               \
+  xmm4 = _mm_mul_pd(xmm0,xmm2);                 \
+  xmm5 = _mm_mul_pd(xmm1,xmm3);                 \
+  xmm6 = _mm_add_pd(xmm4,xmm5);                 \
+  xmm0 = _mm_load_pd(vsum+k2+4);                \
+  xmm1 = _mm_load_pd(vsum+k2+6);                \
+  xmm2 = _mm_load_pd(vprod+k1-4);               \
+  xmm3 = _mm_load_pd(vprod+k1-2);               \
+  xmm4 = _mm_mul_pd(xmm0,xmm2);                 \
+  xmm5 = _mm_mul_pd(xmm1,xmm3);                 \
+  xmm7 = _mm_add_pd(xmm4,xmm5);                 \
+  xmm0 = _mm_hadd_pd(xmm6,xmm7);                
 
-  printf("%f ", *p++);
-  printf("%f ", *p++);
-}
+
+#define comphh0(xmm8,xmm9,xmm10)                \
+  xmm1  = _mm_load_pd(hh2+j);                   \
+  xmm8  = _mm_shuffle_pd(xmm8,xmm1,0x01);       \
+  xmm2  = _mm_load_pd(bb2+j);                   \
+  xmm9  = _mm_shuffle_pd(xmm9,xmm2,0x01);       \
+  xmm3  = _mm_load_pd(ee2+j);                   \
+  xmm10 = _mm_shuffle_pd(xmm10,xmm3,0x1);       \
+  xmm8  = _mm_mul_pd(xmm8,xmm14);               \
+  xmm9  = _mm_mul_pd(xmm9,xmm15);               \
+  xmm10 = _mm_mul_pd(xmm10,xmm16);              \
+  xmm10 = _mm_add_pd(xmm9,xmm10);               \
+  xmm10 = _mm_add_pd(xmm8,xmm10);               \
+  xmm10 = _mm_mul_pd(xmm10,xmm0);               \
+  _mm_store_pd(hh0+j,xmm10);                    \
+  xmm8 = xmm1;                                  \
+  xmm9 = xmm2;                                  \
+  xmm10= xmm3;
+
+#define compbb0ee0(xmm11,xmm12,xmm13,i1,i2)     \
+  xmm0  = _mm_load_pd(hh1+j);                   \
+  xmm11 = _mm_shuffle_pd(xmm11,xmm0,0x01);      \
+  xmm1  = _mm_load_pd(bb1+j);                   \
+  xmm12 = _mm_shuffle_pd(xmm12,xmm1,0x01);      \
+  xmm2  = _mm_load_pd(ee1+j);                   \
+  xmm13 = _mm_shuffle_pd(xmm13,xmm2,0x01);      \
+  xmm3 = _mm_mul_pd(xmm11,xmm17);               \
+  xmm4 = _mm_mul_pd(xmm12,xmm18);               \
+  xmm5 = _mm_mul_pd(xmm13,xmm19);               \
+  xmm3 = _mm_add_pd(xmm3,xmm4);                 \
+  xmm3 = _mm_add_pd(xmm3,xmm5);                 \
+  xmm4 = _mm_load_pd(bemit+(i2));               \
+  xmm3 = _mm_mul_pd(xmm3,xmm4);                 \
+  _mm_store_pd(bb0+j,xmm3);                     \
+  xmm11 = xmm0;                                 \
+  xmm12 = xmm1;                                 \
+  xmm13 = xmm2;                                 \
+  xmm4 = _mm_mul_pd(xmm0,xmm20);                \
+  xmm5 = _mm_mul_pd(xmm1,xmm21);                \
+  xmm6 = _mm_mul_pd(xmm2,xmm22);                \
+  xmm4 = _mm_add_pd(xmm4,xmm5);                 \
+  xmm4 = _mm_add_pd(xmm4,xmm6);                 \
+  xmm5 = _mm_loadu_pd(eemit+(i1));              \
+  xmm5 = _mm_shuffle_pd(xmm5,xmm5,0x01);        \
+  xmm4 = _mm_mul_pd(xmm4,xmm5);                 \
+  _mm_store_pd(ee0+j,xmm4);
 
 double strale_fid1d_diagonal(const double * s1, const double * s2,
                              const int m, const int n,
@@ -152,18 +208,6 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   double * bb2 = NULL;   /* pointer to the H section of 2 diagonals behind */
   double * ee2 = NULL;   /* pointer to the B section of 2 diagonals behind */
 
-  double hemit;          /* emission probability (homology) */
-
-  double prod0;          /* temp storage for computing products in H emissions */
-  double prod1;
-  double prod2;
-  double prod3;
-
-  double sum0;           /* temp storage for computing sums in H emissions */
-  double sum1;
-  double sum2;
-  double sum3;
-
   double prob;
   double logprob;
 #ifdef SCALING
@@ -179,10 +223,9 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   /* TODO: We currently assume that the smallest sequence is s2 
            s1 and s2 must have an even number of multiples of four (padded) */
 
-
   __m128d  xmm0,  xmm1,  xmm2,  xmm3,  xmm4,  xmm5,  xmm6,  xmm7;
   __m128d  xmm8,  xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15;
-  __m128d xmm16, xmm17, xmm18, xmm19, xmm20, xmm21, xmm22, xmm23;
+  __m128d xmm16, xmm17, xmm18, xmm19, xmm20, xmm21, xmm22;
 
   /* set the starting probability of cell (0,0) given leftn and pstart */
   double startprob[3] = {0,0,0};
@@ -343,7 +386,9 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
      before the one that we will start with */
   hh2 = dd;
   bb2 = hh2 + (n+1)*(m+1)+2*(n+m);
+  bb2 += (((n+1)*(m+1)+2*(n+m)) & 0x01);   /* add padding */
   ee2 = bb2 + (n+1)*(m+1)+2*(n+m);
+  ee2 += (((n+1)*(m+1)+2*(n+m)) & 0x01);   /* add padding */
 
   /* set pointers to elements of second diagonal, i.e. the diagonal
      before the one that we will start with */
@@ -382,7 +427,6 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   int dsize = 3;        /* size of 3rd diagonal without padding */
 
   /* traverse diagonals upper triangle */
-  __m128d sum01, sum23;
   for (i = 0; i < n-1; ++i)
   {
 #ifdef SCALING
@@ -425,81 +469,12 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     /* start from the third element, i.e. (i,1) */
     for (j = 2; j < dsize; j += 2)
     {
-      xmm0 = _mm_load_pd(vsum+k2+0);          /* sum01 */
-      xmm1 = _mm_load_pd(vsum+k2+2);          /* sum23 */
+      comphemit(k1,k2);                               /* get hemit in xmm0 */
 
-      xmm2 = _mm_load_pd(vprod+k1+0);         /* prod01 */
-      xmm3 = _mm_load_pd(vprod+k1+2);         /* prod23 */
+      comphh0(xmm8,xmm9,xmm10);
 
-      xmm4 = _mm_mul_pd(xmm0,xmm2);           /* hemit01 */
-      xmm5 = _mm_mul_pd(xmm1,xmm3);           /* hemit23 */
-      xmm6 = _mm_add_pd(xmm4,xmm5);           /* hemit 01 23 */
+      compbb0ee0(xmm11,xmm12,xmm13,i1-1,i2);
 
-
-      xmm0 = _mm_load_pd(vsum+k2+4);
-      xmm1 = _mm_load_pd(vsum+k2+6);
-
-      xmm2 = _mm_load_pd(vprod+k1-4);
-      xmm3 = _mm_load_pd(vprod+k1-2);
-
-      xmm4 = _mm_mul_pd(xmm0,xmm2);
-      xmm5 = _mm_mul_pd(xmm1,xmm3);
-      xmm7 = _mm_add_pd(xmm4,xmm5);
-
-      xmm0 = _mm_hadd_pd(xmm6,xmm7);          /* hemit */
-
-      xmm1  = _mm_load_pd(hh2+j);
-      xmm8  = _mm_shuffle_pd(xmm8,xmm1,0x01);         /* hh2 */
-      xmm2  = _mm_load_pd(bb2+j);
-      xmm9  = _mm_shuffle_pd(xmm9,xmm2,0x01);         /* bb2 */
-      xmm3  = _mm_load_pd(ee2+j);
-      xmm10 = _mm_shuffle_pd(xmm10,xmm3,0x1);         /* ee2 */
-      
-      xmm8  = _mm_mul_pd(xmm8,xmm14);
-      xmm9  = _mm_mul_pd(xmm9,xmm15);
-      xmm10 = _mm_mul_pd(xmm10,xmm16);
-      xmm10 = _mm_add_pd(xmm9,xmm10);
-      xmm10 = _mm_add_pd(xmm8,xmm10);
-      xmm10 = _mm_mul_pd(xmm10,xmm0);
-      _mm_store_pd(hh0+j,xmm10);
-      
-      /* store hh2 registeres for next round */
-      xmm8 = xmm1;
-      xmm9 = xmm2;
-      xmm10= xmm3;
-
-      xmm0  = _mm_load_pd(hh1+j);
-      xmm11 = _mm_shuffle_pd(xmm11,xmm0,0x01);        /* hh1 */
-      xmm1  = _mm_load_pd(bb1+j);
-      xmm12 = _mm_shuffle_pd(xmm12,xmm1,0x01);        /* bb1 */
-      xmm2  = _mm_load_pd(ee1+j);
-      xmm13 = _mm_shuffle_pd(xmm13,xmm2,0x01);        /* ee1 */
-
-      xmm3 = _mm_mul_pd(xmm11,xmm17);
-      xmm4 = _mm_mul_pd(xmm12,xmm18);
-      xmm5 = _mm_mul_pd(xmm13,xmm19);
-      xmm3 = _mm_add_pd(xmm3,xmm4);
-      xmm3 = _mm_add_pd(xmm3,xmm5);
-
-      xmm4 = _mm_load_pd(bemit+i2);
-      xmm3 = _mm_mul_pd(xmm3,xmm4);
-      _mm_store_pd(bb0+j,xmm3);
-
-      xmm11 = xmm0;
-      xmm12 = xmm1;
-      xmm13 = xmm2;                             
-
-      xmm4 = _mm_mul_pd(xmm0,xmm20);
-      xmm5 = _mm_mul_pd(xmm1,xmm21);
-      xmm6 = _mm_mul_pd(xmm2,xmm22);
-      xmm4 = _mm_add_pd(xmm4,xmm5);
-      xmm4 = _mm_add_pd(xmm4,xmm6);
-
-      /* TODO: improve to load aligned + shift */
-      xmm5 = _mm_loadu_pd(eemit+i1-1);
-      xmm5 = _mm_shuffle_pd(xmm5,xmm5,0x01);
-      xmm4 = _mm_mul_pd(xmm4,xmm5);
-      _mm_store_pd(ee0+j,xmm4);
 
       /*
       sum0  = vsum[k2+0];
@@ -534,7 +509,6 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
       prod3 = vprod[k1+3];
 
       hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
-      printf("hemit2: %f\n\n", hemit);
 
       hh0[j+1] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)  * hemit;
       bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)  * bemit[i2];
@@ -568,21 +542,47 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     {
       /* scale current diagonal */
       ++nscale[i+2];
-
-      for (j = 0; j < dsize; ++j)
+      xmm0 = _mm_set_pd(SCALE_FACTOR,SCALE_FACTOR);
+      //for (j = 0; j < dsize; ++j)
+      for (j = 0; j < dsize_padded; j += 2)
       {
-        hh0[j+1] *= SCALE_FACTOR;
-        bb0[j+1] *= SCALE_FACTOR;
-        ee0[j+1] *= SCALE_FACTOR;
+        xmm1 = _mm_load_pd(hh0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(hh0+j,xmm1);
+
+        xmm1 = _mm_load_pd(bb0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(bb0+j,xmm1);
+
+        xmm1 = _mm_load_pd(ee0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(ee0+j,xmm1);
+
+        //hh0[j+1] *= SCALE_FACTOR;
+        //bb0[j+1] *= SCALE_FACTOR;
+        //ee0[j+1] *= SCALE_FACTOR;
       }
      
      /* scale previous diagonal */
      ++nscale[i+1];
-     for (j = 0; j < dsize-1; ++j)
+     //for (j = 0; j < dsize-1; ++j)
+     int dsize_prev_padded = dsize + ((dsize+1) & 0x01);
+     for (j = 0; j < dsize_prev_padded; j += 2)
      {
-       hh1[j+1] *= SCALE_FACTOR;
-       bb1[j+1] *= SCALE_FACTOR;
-       ee1[j+1] *= SCALE_FACTOR;
+       xmm1 = _mm_loadu_pd(hh1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_storeu_pd(hh1+j,xmm1);
+
+       xmm1 = _mm_loadu_pd(bb1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_storeu_pd(bb1+j,xmm1);
+
+       xmm1 = _mm_loadu_pd(ee1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_storeu_pd(ee1+j,xmm1);
+       //hh1[j+1] *= SCALE_FACTOR;
+       //bb1[j+1] *= SCALE_FACTOR;
+       //ee1[j+1] *= SCALE_FACTOR;
      }
     }
 #endif
@@ -626,42 +626,69 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     hh0[1] = 0;
     bb0[1] = 0;
     ee0[1] = e0;
+
+    xmm8 = _mm_load_pd(hh2+0);
+    xmm9 = _mm_load_pd(bb2+0);
+    xmm10 = _mm_load_pd(ee2+0);
+
+    xmm11 = _mm_load_pd(hh1+0);
+    xmm12 = _mm_load_pd(bb1+0);
+    xmm13 = _mm_load_pd(ee1+0);
+
+    xmm14 = _mm_set_pd(phh,phh);
+    xmm15 = _mm_set_pd(pbh,pbh);
+    xmm16 = _mm_set_pd(peh,peh);
+
+    xmm17 = _mm_set_pd(phb, phb);
+    xmm18 = _mm_set_pd(pbb, pbb);
+    xmm19 = _mm_set_pd(peb, peb);
+
+    xmm20 = _mm_set_pd(phe, phe);
+    xmm21 = _mm_set_pd(pbe, pbe);
+    xmm22 = _mm_set_pd(pee, pee);
+
     for (j = 2; j < dsize_padded; j += 2)
     {
-      sum0  = vsum[k2+0];
-      sum1  = vsum[k2+1];
-      sum2  = vsum[k2+2];
-      sum3  = vsum[k2+3];
-      prod0 = vprod[k1+0];
-      prod1 = vprod[k1+1];
-      prod2 = vprod[k1+2];
-      prod3 = vprod[k1+3];
+      comphemit(k1,k2);
 
-      hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+      comphh0(xmm8,xmm9,xmm10);
 
-      hh0[j] = (hh2[j-1]*phh + bb2[j-1]*pbh + ee2[j-1]*peh) * hemit;
-      bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit[i2-1];
-      ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit[i1-1];
+      compbb0ee0(xmm11,xmm12,xmm13,i1-2,i2-1);
+
+      //sum0  = vsum[k2+0];
+      //sum1  = vsum[k2+1];
+      //sum2  = vsum[k2+2];
+      //sum3  = vsum[k2+3];
+      //prod0 = vprod[k1+0];
+      //prod1 = vprod[k1+1];
+      //prod2 = vprod[k1+2];
+      //prod3 = vprod[k1+3];
+
+      //hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+
+      //hh0[j] = (hh2[j-1]*phh + bb2[j-1]*pbh + ee2[j-1]*peh) * hemit;
+      //bb0[j] = (hh1[j-1]*phb + bb1[j-1]*pbb + ee1[j-1]*peb) * bemit[i2-1];
+      //ee0[j] = (hh1[j]*phe   + bb1[j]*pbe   + ee1[j]*pee)   * eemit[i1-1];
 
       k1 -= 4;
       i1 -= 1;
       k2 += 4;
       i2 += 1;
 
-      sum0  = vsum[k2+0];
-      sum1  = vsum[k2+1];
-      sum2  = vsum[k2+2];
-      sum3  = vsum[k2+3];
-      prod0 = vprod[k1+0];
-      prod1 = vprod[k1+1];
-      prod2 = vprod[k1+2];
-      prod3 = vprod[k1+3];
+      //sum0  = vsum[k2+0];
+      //sum1  = vsum[k2+1];
+      //sum2  = vsum[k2+2];
+      //sum3  = vsum[k2+3];
+      //prod0 = vprod[k1+0];
+      //prod1 = vprod[k1+1];
+      //prod2 = vprod[k1+2];
+      //prod3 = vprod[k1+3];
 
-      hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+      //hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
-      hh0[j+1] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
-      bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[i2-1];
-      ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[i1-1];
+      //hh0[j+1] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
+      //bb0[j+1] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[i2-1];
+      //ee0[j+1] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[i1-1];
 
       k1 -= 4;
       i1 -= 1;
@@ -682,20 +709,46 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     {
       /* scale current diagonal */
       ++nscale[i+2];
-      for (j = 0; j < dsize; ++j)
+      xmm0 = _mm_set_pd(SCALE_FACTOR,SCALE_FACTOR);
+      //for (j = 0; j < dsize; ++j)
+      for (j = 0; j < dsize_padded; j += 2)
       {
-        hh0[j+1] *= SCALE_FACTOR;
-        bb0[j+1] *= SCALE_FACTOR;
-        ee0[j+1] *= SCALE_FACTOR;
+        xmm1 = _mm_load_pd(hh0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(hh0+j,xmm1);
+
+        xmm1 = _mm_load_pd(bb0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(bb0+j,xmm1);
+
+        xmm1 = _mm_load_pd(ee0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(ee0+j,xmm1);
+        //hh0[j+1] *= SCALE_FACTOR;
+        //bb0[j+1] *= SCALE_FACTOR;
+        //ee0[j+1] *= SCALE_FACTOR;
       }
      
      /* scale previous diagonal */
      ++nscale[i+1];
-     for (j = 0; j < dsize; ++j)
+     //for (j = 0; j < dsize; ++j)
+     int dsize_prev_padded = dsize + ((dsize+1) & 0x01);
+     for (j = 0; j < dsize_prev_padded; j += 2)
      {
-       hh1[j+1] *= SCALE_FACTOR;
-       bb1[j+1] *= SCALE_FACTOR;
-       ee1[j+1] *= SCALE_FACTOR;
+       xmm1 = _mm_load_pd(hh1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_store_pd(hh1+j,xmm1);
+
+       xmm1 = _mm_load_pd(bb1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_store_pd(bb1+j,xmm1);
+
+       xmm1 = _mm_load_pd(ee1+j);
+       xmm1 = _mm_mul_pd(xmm1,xmm0);
+       _mm_store_pd(ee1+j,xmm1);
+       //hh1[j+1] *= SCALE_FACTOR;
+       //bb1[j+1] *= SCALE_FACTOR;
+       //ee1[j+1] *= SCALE_FACTOR;
      }
     }
 #endif
@@ -734,42 +787,106 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     k2 = (i-m+1)*4;
     i2 = (i-m+2);
 
+    xmm11 = _mm_loadu_pd(hh1+0);
+    xmm12 = _mm_loadu_pd(bb1+0);
+    xmm13 = _mm_loadu_pd(ee1+0);
+
+    xmm14 = _mm_set_pd(phh,phh);
+    xmm15 = _mm_set_pd(pbh,pbh);
+    xmm16 = _mm_set_pd(peh,peh);
+
+    xmm17 = _mm_set_pd(phb, phb);
+    xmm18 = _mm_set_pd(pbb, pbb);
+    xmm19 = _mm_set_pd(peb, peb);
+
+    xmm20 = _mm_set_pd(phe, phe);
+    xmm21 = _mm_set_pd(pbe, pbe);
+    xmm22 = _mm_set_pd(pee, pee);
+
     for (j = 0; j < dsize; j += 2)
     {
-      sum0  = vsum[k2+0];
-      sum1  = vsum[k2+1];
-      sum2  = vsum[k2+2];
-      sum3  = vsum[k2+3];
-      prod0 = vprod[k1+0];
-      prod1 = vprod[k1+1];
-      prod2 = vprod[k1+2];
-      prod3 = vprod[k1+3];
+      comphemit(k1,k2);
 
-      hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+      /* compute hh0[j] and hh0[j+1] */
+      xmm1  = _mm_loadu_pd(hh2+j);                   
+      xmm2  = _mm_loadu_pd(bb2+j);                   
+      xmm3  = _mm_loadu_pd(ee2+j);                   
+      xmm8  = _mm_mul_pd(xmm1,xmm14);               
+      xmm9  = _mm_mul_pd(xmm2,xmm15);               
+      xmm10 = _mm_mul_pd(xmm3,xmm16);              
+      xmm10 = _mm_add_pd(xmm9,xmm10);               
+      xmm10 = _mm_add_pd(xmm8,xmm10);               
+      xmm10 = _mm_mul_pd(xmm10,xmm0);               
+      _mm_store_pd(hh0+j,xmm10);                    
 
-      hh0[j] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
-      bb0[j] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[i2-1];
-      ee0[j] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[i1-1];
+
+      /* compute bb0[j] and bb0[j+1] */
+      xmm3 = _mm_mul_pd(xmm11,xmm17);
+      xmm4 = _mm_mul_pd(xmm12,xmm18);
+      xmm5 = _mm_mul_pd(xmm13,xmm19);
+      xmm3 = _mm_add_pd(xmm3,xmm4);
+      xmm3 = _mm_add_pd(xmm3,xmm5);
+      xmm4 = _mm_loadu_pd(bemit+i2-1);
+      xmm3 = _mm_mul_pd(xmm3,xmm4);
+      _mm_store_pd(bb0+j,xmm3);
+
+      /* compute ee0[j] and ee0[j+1] */
+      xmm0  = _mm_loadu_pd(hh1+j+2);
+      xmm11 = _mm_shuffle_pd(xmm11,xmm0,0x01);      
+      xmm1  = _mm_loadu_pd(bb1+j+2);
+      xmm12 = _mm_shuffle_pd(xmm12,xmm1,0x01);      
+      xmm2  = _mm_loadu_pd(ee1+j+2);
+      xmm13 = _mm_shuffle_pd(xmm13,xmm2,0x01);      
+
+      xmm3 = _mm_mul_pd(xmm11,xmm20);
+      xmm4 = _mm_mul_pd(xmm12,xmm21);
+      xmm5 = _mm_mul_pd(xmm13,xmm22);
+      xmm3 = _mm_add_pd(xmm3,xmm4);
+      xmm3 = _mm_add_pd(xmm3,xmm5);
+      xmm4 = _mm_loadu_pd(eemit+i1-2);
+      xmm4 = _mm_shuffle_pd(xmm4,xmm4,0x01);        
+      xmm3 = _mm_mul_pd(xmm3,xmm4);
+      _mm_store_pd(ee0+j,xmm3);
+
+      xmm11 = xmm0;
+      xmm12 = xmm1;
+      xmm13 = xmm2;
+
+
+      //sum0  = vsum[k2+0];
+      //sum1  = vsum[k2+1];
+      //sum2  = vsum[k2+2];
+      //sum3  = vsum[k2+3];
+      //prod0 = vprod[k1+0];
+      //prod1 = vprod[k1+1];
+      //prod2 = vprod[k1+2];
+      //prod3 = vprod[k1+3];
+
+      //hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+
+      //hh0[j] = (hh2[j]*phh   + bb2[j]*pbh   + ee2[j]*peh)   * hemit;
+      //bb0[j] = (hh1[j]*phb   + bb1[j]*pbb   + ee1[j]*peb)   * bemit[i2-1];
+      //ee0[j] = (hh1[j+1]*phe + bb1[j+1]*pbe + ee1[j+1]*pee) * eemit[i1-1];
 
       k1 -= 4;
       i1 -= 1;
       k2 += 4;
       i2 += 1;
 
-      sum0  = vsum[k2+0];
-      sum1  = vsum[k2+1];
-      sum2  = vsum[k2+2];
-      sum3  = vsum[k2+3];
-      prod0 = vprod[k1+0];
-      prod1 = vprod[k1+1];
-      prod2 = vprod[k1+2];
-      prod3 = vprod[k1+3];
+      //sum0  = vsum[k2+0];
+      //sum1  = vsum[k2+1];
+      //sum2  = vsum[k2+2];
+      //sum3  = vsum[k2+3];
+      //prod0 = vprod[k1+0];
+      //prod1 = vprod[k1+1];
+      //prod2 = vprod[k1+2];
+      //prod3 = vprod[k1+3];
 
-      hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
+      //hemit = prod0*sum0 + prod1*sum1 + prod2*sum2 + prod3*sum3;
 
-      hh0[j+1] = (hh2[j+1]*phh + bb2[j+1]*pbh + ee2[j+1]*peh) * hemit;
-      bb0[j+1] = (hh1[j+1]*phb + bb1[j+1]*pbb + ee1[j+1]*peb) * bemit[i2-1];
-      ee0[j+1] = (hh1[j+2]*phe + bb1[j+2]*pbe + ee1[j+2]*pee) * eemit[i1-1];
+      //hh0[j+1] = (hh2[j+1]*phh + bb2[j+1]*pbh + ee2[j+1]*peh) * hemit;
+      //bb0[j+1] = (hh1[j+1]*phb + bb1[j+1]*pbb + ee1[j+1]*peb) * bemit[i2-1];
+      //ee0[j+1] = (hh1[j+2]*phe + bb1[j+2]*pbe + ee1[j+2]*pee) * eemit[i1-1];
 
       /* move pointers to sequence partials */
       k1 -= 4;
@@ -790,20 +907,43 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     {
       /* scale current diagonal */
       ++nscale[i+2];
-      for (j = 0; j < dsize; ++j)
+      xmm0 = _mm_set_pd(SCALE_FACTOR,SCALE_FACTOR);
+      //for (j = 0; j < dsize; ++j)
+      for (j = 0; j < dsize_padded; j += 2)
       {
-        hh0[j] *= SCALE_FACTOR;
-        bb0[j] *= SCALE_FACTOR;
-        ee0[j] *= SCALE_FACTOR;
+        xmm1 = _mm_load_pd(hh0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(hh0+j,xmm1);
+
+        xmm1 = _mm_load_pd(bb0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(bb0+j,xmm1);
+
+        xmm1 = _mm_load_pd(ee0+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_store_pd(ee0+j,xmm1);
+        //hh0[j] *= SCALE_FACTOR;
+        //bb0[j] *= SCALE_FACTOR;
+        //ee0[j] *= SCALE_FACTOR;
       }
      
      /* scale previous diagonal */
      ++nscale[i+1];
-     for (j = 0; j < dsize+1; ++j)
+     //for (j = 0; j < dsize+1; ++j)
+     int dsize_prev_padded = dsize+1;//+ ((dsize+1) & 0x01);
+     for (j = 0; j < dsize_prev_padded-1; j += 2)
      {
-       hh1[j] *= SCALE_FACTOR;
-       bb1[j] *= SCALE_FACTOR;
-       ee1[j] *= SCALE_FACTOR;
+        xmm1 = _mm_loadu_pd(hh1+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_storeu_pd(hh1+j,xmm1);
+
+        xmm1 = _mm_loadu_pd(bb1+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_storeu_pd(bb1+j,xmm1);
+
+        xmm1 = _mm_loadu_pd(ee1+j);
+        xmm1 = _mm_mul_pd(xmm1,xmm0);
+        _mm_storeu_pd(ee1+j,xmm1);
      }
     }
 #endif
@@ -903,12 +1043,20 @@ double strale_fid1de_run(const double * s1,
                        int allow_homologies,
                        double startprob)
 {
-  double prob;
+  double prob = 0;
   int i;
+  unsigned int s1_len, s2_len;
+
+  s1_len = s1end - s1start;
+  s2_len = s2end - s2start;
+
+  /* end if one of the partial sequences is empty */
+  if (s1_len == 0 || s2_len == 0) return (0);
 
   /* compute the 9 probability entries and output them (order H,B,E) */
   compute_probs(t*lambda, gamma);
   //strale_fid1d_dump_tpm();
+
 
   if (rightn != 0 && rightn != 1 && rightn != 2) return (0);
 
@@ -955,6 +1103,9 @@ int main(int argc, char * argv[])
   {
     opt_iters = atoi(argv[3]);
   }
+
+  if (!opt_iters) return (EXIT_SUCCESS);
+
 
   int seq1end = atoi(argv[1]);
   int seq2end = atoi(argv[2]);

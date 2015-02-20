@@ -46,7 +46,7 @@ tester-fid1-diag-scale: fid1_diagonal.c utils.o
 	$(CC) -DSCALING $(CFLAGS) $+ $(LIBS) -o $@
 
 tester-fid1-diag-sse3: fid1_diagonal_sse.c utils.o
-	$(CC) -DSCALING -mssse3 $(CFLAGS) $+ $(LIBS) -o $@
+	$(CC) -DSCALING -ffast-math -mssse3 $(CFLAGS) $+ $(LIBS) -o $@
 
 tester-avx-fma: fid1_avx.c utils.o
 	$(CC) $(CFLAGS) -DHAVE_FMA -mavx -mfma $+ $(LIBS) -o $@

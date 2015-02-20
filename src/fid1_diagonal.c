@@ -1,5 +1,7 @@
 #include "fid.h"
 
+int opt_iters = 1;
+
 static double * dd = NULL;
 static long  ddlen = 0;
 #ifdef SCALING
@@ -85,6 +87,7 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
                              const double * freqs)
 {
 
+
   /* reallocate matrix if necessary */
   if (3*(n+1)*(m+1) + 6*(n+m) > ddlen)
   {
@@ -161,7 +164,7 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
   /* TODO: We currently assume that the smallest sequence is s2 */
 
 
-  s1 = s1 + 4;  /* skip the first four padding entries */
+  //s1 = s1 + 4;  /* skip the first four padding entries */
 
   /* set the starting probability of cell (0,0) given leftn and pstart */
   double startprob[3] = {0,0,0};
@@ -309,13 +312,14 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     {
       for (j = 1; j < dsize-1; ++j)
       {
-        if (hh0[j+1] > dmax) dmax = hh0[j];
-        if (bb0[j+1] > dmax) dmax = bb0[j];
-        if (ee0[j+1] > dmax) dmax = ee0[j];
+        if (hh0[j+1] > dmax) dmax = hh0[j+1];
+        if (bb0[j+1] > dmax) dmax = bb0[j+1];
+        if (ee0[j+1] > dmax) dmax = ee0[j+1];
       }
     }
     if (dmax < SCALE_THRESHOLD)
     {
+//      printf ("Scaling 1\n");
       /* scale current diagonal */
       ++nscale[i];
 
@@ -420,12 +424,13 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     /* skip first and last */
     for (j = 1; j < dsize-1; ++j)
     {
-      if (hh0[j+1] > dmax) dmax = hh0[j];
-      if (bb0[j+1] > dmax) dmax = bb0[j];
-      if (ee0[j+1] > dmax) dmax = ee0[j];
+      if (hh0[j+1] > dmax) dmax = hh0[j+1];
+      if (bb0[j+1] > dmax) dmax = bb0[j+1];
+      if (ee0[j+1] > dmax) dmax = ee0[j+1];
     }
     if (dmax < SCALE_THRESHOLD)
     {
+//      printf ("Scaling 2\n");
       /* scale current diagonal */
       ++nscale[i];
       for (j = 0; j < dsize; ++j)
@@ -523,15 +528,15 @@ double strale_fid1d_diagonal(const double * s1, const double * s2,
     }
 #ifdef SCALING
     /* scaling */
-    /* skip first and last */
-    for (j = 0; j < dsize-1; ++j)
+    for (j = 0; j < dsize; ++j)
     {
-      if (hh0[j+1] > dmax) dmax = hh0[j];
-      if (bb0[j+1] > dmax) dmax = bb0[j];
-      if (ee0[j+1] > dmax) dmax = ee0[j];
+      if (hh0[j] > dmax) dmax = hh0[j];
+      if (bb0[j] > dmax) dmax = bb0[j];
+      if (ee0[j] > dmax) dmax = ee0[j];
     }
     if (dmax < SCALE_THRESHOLD)
     {
+//      printf ("Scaling 3\n");
       /* scale current diagonal */
       ++nscale[i];
       for (j = 0; j < dsize; ++j)
@@ -648,6 +653,7 @@ double strale_fid1de_run(const double * s1,
                        double startprob)
 {
   double prob;
+  int i;
 
   /* compute the 9 probability entries and output them (order H,B,E) */
   compute_probs(t*lambda, gamma);
@@ -656,6 +662,7 @@ double strale_fid1de_run(const double * s1,
   if (rightn != 0 && rightn != 1 && rightn != 2) return (0);
 
   if (allow_homologies)
+    for(i = 0; i < opt_iters; ++i)
     prob = strale_fid1d_diagonal(s1+s1start*4, s2+s2start*4,
                              s1end - s1start, s2end - s2start,
                              startprob,
@@ -677,11 +684,16 @@ int main(int argc, char * argv[])
 {
   double h;
 
-  if (argc != 3)
+  if (argc != 3 && argc != 4)
    {
-     fprintf(stderr, " syntax: %s seq1end seq2end\n", argv[0]);
+     fprintf(stderr, " syntax: %s seq1end seq2end [iterations]\n", argv[0]);
      exit(1);
    }
+
+  if (argc == 4)
+  {
+    opt_iters = atoi(argv[3]);
+  }
 
   int seq1end = atoi(argv[1]);
   int seq2end = atoi(argv[2]);
@@ -702,10 +714,11 @@ int main(int argc, char * argv[])
                                 
 
   /* allocate memory for all elements*entries (4) of the sequences */
-  double * s1 = xmalloc((s1_size+1)*4*sizeof(double), FID_ALIGNMENT_SSE);
+  //double * s1 = xmalloc((s1_size+1)*4*sizeof(double), FID_ALIGNMENT_SSE);
+  double * s1 = xmalloc(s1_size*4*sizeof(double), FID_ALIGNMENT_SSE);
   double * s2 = xmalloc(s2_size*4*sizeof(double), FID_ALIGNMENT_SSE);
 
-  set_sequence_1(s1+4);
+  set_sequence_1(s1);
   set_sequence_2(s2);
 
   h = strale_fid1de_run(s1,           /* sequence 1 */
